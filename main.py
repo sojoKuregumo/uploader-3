@@ -3,6 +3,7 @@ import os
 import subprocess
 import threading
 import sys
+import tempfile
 from flask import Flask
 from pyrogram import Client, filters, idle
 
@@ -25,82 +26,67 @@ def run_flask():
 QUALITY_TAG = "1080p"  # Change this for 720p / 360p
 SLEEP_TIME = 0
 
-# 👇 ADD YOUR SESSION TOKEN HERE (from mega-session command)
-MEGA_SESSION_TOKEN = "YOUR_SESSION_TOKEN_HERE"  # Replace with your actual token
-# Get this by running: mega-session on your local machine
-# 👆
+# Get MEGA session token from environment (you added this in Render dashboard)
+MEGA_SESSION_TOKEN = os.environ.get("MEGA_SESSION_TOKEN", "").strip()
+
+if not MEGA_SESSION_TOKEN:
+    print("⚠️ WARNING: MEGA_SESSION_TOKEN not found in environment!", flush=True)
+    print("⚠️ MEGA uploads will fail. Please set MEGA_SESSION_TOKEN in Render environment variables.", flush=True)
 
 MEGA_ROOT = "/Root/AnimeDownloads"
 
 def mega_login_with_session():
     """
-    Login to MEGA using session token (more reliable than password)
+    Login to MEGA using session token
     """
+    if not MEGA_SESSION_TOKEN:
+        print("❌ Cannot login: No MEGA session token provided", flush=True)
+        return False
+    
     print("🔑 Attempting Mega Login with Session Token...", flush=True)
+    
     try:
         # Find mega-cmd binary
         mega_cmd_path = os.path.join(os.getcwd(), "mega_local", "usr", "bin", "mega-cmd")
         
         if not os.path.exists(mega_cmd_path):
             print(f"❌ mega-cmd not found at: {mega_cmd_path}", flush=True)
-            # Try alternative path
-            mega_cmd_path = os.path.join(os.getcwd(), "mega_local", "usr", "bin", "mega-cmd-server")
-            if not os.path.exists(mega_cmd_path):
-                print(f"❌ mega-cmd-server also not found", flush=True)
-                return False
+            return False
         
-        # First, check if already logged in
-        print("🔍 Checking current login status...", flush=True)
-        check_cmd = f'echo "whoami" | {mega_cmd_path} -console 2>&1'
-        proc = subprocess.run(check_cmd, shell=True, capture_output=True, text=True)
-        
-        if "Not logged in" not in proc.stdout and "ERROR" not in proc.stdout:
-            print(f"✅ Already logged in: {proc.stdout[:100]}...", flush=True)
-            return True
-        
-        # Login using session token
-        print(f"🔑 Logging in with session token...", flush=True)
-        
-        # Create a temporary script to handle the login
-        import tempfile
+        # Create a temporary script with MEGA commands
         with tempfile.NamedTemporaryFile(mode='w', suffix='.megascript', delete=False) as f:
-            # Write MEGAcmd commands to file
+            # Use the session command to login
             f.write(f'session {MEGA_SESSION_TOKEN}\n')
-            f.write('whoami\n')
+            f.write('whoami\n')  # Check if login worked
             f.write('exit\n')
             script_path = f.name
         
         # Execute the script
-        login_cmd = f'{mega_cmd_path} -console < "{script_path}"'
-        proc = subprocess.run(login_cmd, shell=True, capture_output=True, text=True)
+        cmd = f'{mega_cmd_path} -console < "{script_path}"'
+        proc = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         
-        # Clean up temp file
+        # Clean up
         os.unlink(script_path)
         
-        if "Login successful" in proc.stdout or "Welcome" in proc.stdout or proc.returncode == 0:
+        # Check result
+        output = proc.stdout.lower()
+        if "welcome" in output or "login successful" in output or "already logged in" in output:
             print("✅ Mega Login Successful with Session Token!", flush=True)
             
-            # Verify login
+            # Verify by checking whoami
             verify_cmd = f'echo "whoami" | {mega_cmd_path} -console'
             verify = subprocess.run(verify_cmd, shell=True, capture_output=True, text=True)
-            if "Not logged in" not in verify.stdout:
-                print(f"✅ Verified: {verify.stdout.strip()}", flush=True)
+            if "not logged in" not in verify.stdout.lower():
+                username_line = [line for line in verify.stdout.split('\n') if 'email' in line.lower() or '@' in line]
+                if username_line:
+                    print(f"✅ Logged in as: {username_line[0].strip()}", flush=True)
                 return True
             else:
-                print(f"⚠️ Login seemed successful but verification failed: {verify.stdout}", flush=True)
+                print(f"⚠️ Login seemed successful but verification failed", flush=True)
                 return False
         else:
-            print(f"❌ Session Login Failed: {proc.stdout[:200]}", flush=True)
-            
-            # Try alternative method
-            print("🔄 Trying alternative session login method...", flush=True)
-            alt_cmd = f'echo "session {MEGA_SESSION_TOKEN}" | {mega_cmd_path} -console'
-            alt_proc = subprocess.run(alt_cmd, shell=True, capture_output=True, text=True)
-            
-            if "Login successful" in alt_proc.stdout or alt_proc.returncode == 0:
-                print("✅ Alternative session login successful!", flush=True)
-                return True
-            
+            print(f"❌ Session Login Failed. Output: {proc.stdout[:500]}", flush=True)
+            print(f"❌ Error: {proc.stderr[:500]}", flush=True)
             return False
             
     except Exception as e:
@@ -109,20 +95,20 @@ def mega_login_with_session():
         traceback.print_exc()
         return False
 
-# Check environment variables
-print("🔍 Checking environment variables...", flush=True)
+# Check Telegram environment variables
+print("🔍 Checking Telegram environment variables...", flush=True)
 api_id = os.environ.get("UPLOADER_API_ID")
 api_hash = os.environ.get("UPLOADER_API_HASH")
 bot_token = os.environ.get("UPLOADER_BOT_TOKEN")
 
 if not all([api_id, api_hash, bot_token]):
-    print("❌ Missing environment variables!", flush=True)
+    print("❌ Missing Telegram environment variables!", flush=True)
     print(f"API_ID: {'✅' if api_id else '❌'}")
     print(f"API_HASH: {'✅' if api_hash else '❌'}")
     print(f"BOT_TOKEN: {'✅' if bot_token else '❌'}")
     sys.exit(1)
 
-print("✅ Environment variables found!", flush=True)
+print("✅ Telegram environment variables found!", flush=True)
 
 # Setup Bot
 print("🤖 Setting up Pyrogram Client...", flush=True)
@@ -154,10 +140,15 @@ async def mega_status(client, message):
     check_cmd = f'echo "whoami" | {mega_cmd_path} -console'
     proc = subprocess.run(check_cmd, shell=True, capture_output=True, text=True)
     
-    if "Not logged in" in proc.stdout:
+    if "not logged in" in proc.stdout.lower():
         await message.reply("❌ MEGA: Not logged in")
     else:
-        await message.reply(f"✅ MEGA: {proc.stdout.strip()}")
+        # Extract email from output
+        email_line = [line for line in proc.stdout.split('\n') if '@' in line]
+        if email_line:
+            await message.reply(f"✅ MEGA: Logged in as {email_line[0].strip()}")
+        else:
+            await message.reply(f"✅ MEGA: Logged in\n```{proc.stdout[:200]}```")
 
 @app.on_message(filters.command(["upload", "fastupload"]))
 async def upload_handler(client, message):
@@ -192,7 +183,6 @@ async def upload_handler(client, message):
     print(f"🔍 Checking Mega folder: {mega_folder}", flush=True)
     
     # Create a script to list files
-    import tempfile
     with tempfile.NamedTemporaryFile(mode='w', suffix='.megascript', delete=False) as f:
         f.write(f'ls "{mega_folder}"\n')
         f.write('exit\n')
@@ -202,31 +192,40 @@ async def upload_handler(client, message):
     res = subprocess.run(list_cmd, shell=True, capture_output=True, text=True)
     os.unlink(script_path)
     
-    if "ERROR" in res.stdout or "not found" in res.stdout.lower():
+    # Check for errors
+    if "error" in res.stdout.lower() or "not found" in res.stdout.lower() or res.returncode != 0:
         print(f"❌ Mega LS Failed: {res.stdout[:500]}", flush=True)
         return await message.reply(f"❌ Mega Error: Folder `{folder_name}` not found or access denied.")
     
-    # 6. Filter files by quality
-    lines = [line.strip() for line in res.stdout.strip().split('\n') if line.strip()]
-    # Find lines that look like file listings (not command prompts or status messages)
+    # 6. Extract file names from output
+    lines = res.stdout.split('\n')
     all_files = []
+    
     for line in lines:
-        # Skip MEGA prompt lines and command echoes
-        if line.startswith('MEGA>') or line.startswith('ls ') or 'bytes used' in line:
+        line = line.strip()
+        # Skip empty lines and command prompts
+        if not line or line.startswith('MEGA>') or line.startswith('ls ') or 'bytes used' in line.lower():
             continue
-        if line and not line.startswith('[') and not line.startswith('Total'):  # Skip summary lines
+        # Skip summary lines
+        if line.startswith('[') or line.startswith('Total ') or 'folder' in line.lower() and 'file' in line.lower():
+            continue
+        # This should be a file name
+        if line:
             all_files.append(line)
     
+    # 7. Filter files by quality
     target_files = [f for f in all_files if QUALITY_TAG in f.lower() or f"_{QUALITY_TAG[:-1]}_" in f.lower()]
     
     if not target_files:
-        print(f"❌ No {QUALITY_TAG} files found. Total files: {len(all_files)}", flush=True)
-        return await message.reply(f"❌ No {QUALITY_TAG} files found.")
+        print(f"❌ No {QUALITY_TAG} files found. Total files in folder: {len(all_files)}", flush=True)
+        return await message.reply(f"❌ No {QUALITY_TAG} files found in `{folder_name}`.")
 
-    status = await message.reply(f"🚀 **{QUALITY_TAG} Started** | Files: `{len(target_files)}`")
+    status = await message.reply(f"🚀 **{QUALITY_TAG} Upload Started**\nFiles: `{len(target_files)}`")
 
-    # 7. Download and upload loop
+    # 8. Download and upload loop
     uploaded = 0
+    failed = 0
+    
     for filename in target_files:
         print(f"⬇️ Downloading: {filename}", flush=True)
         local_path = os.path.join(os.getcwd(), filename)
@@ -253,13 +252,23 @@ async def upload_handler(client, message):
                 uploaded += 1
                 print(f"✅ Uploaded: {filename}", flush=True)
             except Exception as e:
-                print(f"❌ Telegram Upload Fail: {e}", flush=True)
+                print(f"❌ Telegram Upload Fail for {filename}: {e}", flush=True)
+                failed += 1
             finally:
-                os.remove(local_path)
+                try:
+                    os.remove(local_path)
+                except:
+                    pass
         else:
             print(f"❌ Download failed for: {filename}", flush=True)
+            failed += 1
     
-    await status.edit_text(f"✅ **{QUALITY_TAG} Done.** Uploaded: `{uploaded}/{len(target_files)}` files")
+    result_text = f"✅ **{QUALITY_TAG} Upload Complete**\n"
+    result_text += f"• Success: `{uploaded}`\n"
+    result_text += f"• Failed: `{failed}`\n"
+    result_text += f"• Total: `{len(target_files)}`"
+    
+    await status.edit_text(result_text)
 
 async def main():
     print("🚀 Starting services...", flush=True)
@@ -270,10 +279,13 @@ async def main():
     print("✅ Flask thread started", flush=True)
     
     # Try Mega login with session token
-    if not mega_login_with_session():
-        print("⚠️ Mega login failed, but continuing...", flush=True)
+    if MEGA_SESSION_TOKEN:
+        if mega_login_with_session():
+            print("✅ Mega login successful!", flush=True)
+        else:
+            print("⚠️ Mega login failed", flush=True)
     else:
-        print("✅ Mega login successful!", flush=True)
+        print("⚠️ Skipping Mega login (no session token)", flush=True)
     
     print("🤖 Starting Telegram Client...", flush=True)
     await app.start()
@@ -282,13 +294,6 @@ async def main():
     me = await app.get_me()
     print(f"✅ BOT IS RUNNING: @{me.username} (ID: {me.id})", flush=True)
     print("🎯 Listening for commands...", flush=True)
-    
-    # Send a test message to yourself (optional)
-    # Replace YOUR_CHAT_ID with your actual Telegram ID
-    # try:
-    #     await app.send_message(YOUR_CHAT_ID, f"✅ {QUALITY_TAG} Bot started successfully!")
-    # except:
-    #     pass
     
     await idle()
     await app.stop()
