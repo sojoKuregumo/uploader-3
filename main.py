@@ -17,7 +17,7 @@ def run_flask():
     port = int(os.environ.get("PORT", 8080))
     web_app.run(host='0.0.0.0', port=port)
 
-# --- UPLOADER LOGIC ---
+# --- CONFIGURATION ---
 QUALITY_TAG = "360p"
 MEGA_ROOT = "/Root/AnimeDownloads"
 TARGET_CHAT_ID = -1003392399992
@@ -42,6 +42,12 @@ app = Client(
     workers=16
 )
 
+# --- COMMANDS ---
+
+@app.on_message(filters.command("ping"))
+async def ping_handler(client, message):
+    await message.reply_text(f"✅ {QUALITY_TAG} Uploader is ONLINE!")
+
 @app.on_message(filters.command(["upload", "fastupload"]))
 async def fast_upload_360(client, message):
     cmd_text = message.text.lower()
@@ -49,7 +55,7 @@ async def fast_upload_360(client, message):
     if "-all" not in cmd_text and "-360" not in cmd_text:
         return
 
-    # 40-second stagger delay
+    # 40-second stagger delay for the 360p bot
     await asyncio.sleep(40)
 
     parts = message.text.split()
@@ -91,6 +97,8 @@ async def fast_upload_360(client, message):
             finally:
                 if os.path.exists(local_path):
                     os.remove(local_path)
+    
+    await status_msg.edit_text(f"✅ **360p UPLOAD COMPLETE**\nFolder: `{folder_name}`")
 
 async def main():
     threading.Thread(target=run_flask, daemon=True).start()
