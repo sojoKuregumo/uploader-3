@@ -6,83 +6,81 @@ import threading
 from flask import Flask
 from pyrogram import Client, filters, idle
 
-# --- RENDER PORT CONFIGURATION ---
+# --- RENDER HEALTH CHECK ---
 web_app = Flask(__name__)
-
 @web_app.route('/')
-def health_check():
-    return "360p Uploader is Online", 200
+def health_check(): return "360p Uploader is Online", 200
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
     web_app.run(host='0.0.0.0', port=port)
 
 # --- CONFIGURATION ---
+# HARDCODED CREDENTIALS
+MEGA_EMAIL = 'opcnlbnl@gmail.com'
+MEGA_PASSWORD = 'Reigen@100%'
+
 QUALITY_TAG = "360p"
+SLEEP_TIME = 40         # 40-second delay for 360p bot
 MEGA_ROOT = "/Root/AnimeDownloads"
 TARGET_CHAT_ID = -1003392399992
 
 def mega_login():
-    email = os.environ.get("MEGA_EMAIL")
-    password = os.environ.get("MEGA_PASSWORD")
-    if email and password:
-        check = subprocess.run('mega-whoami', shell=True, capture_output=True, text=True)
-        if "Account e-mail:" in check.stdout:
-            return True
-        login_cmd = f'mega-login "{email}" "{password}"'
-        subprocess.run(login_cmd, shell=True)
+    try:
+        login_cmd = f'mega-login "{MEGA_EMAIL}" "{MEGA_PASSWORD}"'
+        subprocess.run(login_cmd, shell=True, capture_output=True, text=True)
+        print("✅ 360p Mega Login successful")
         return True
-    return False
+    except Exception as e:
+        print(f"❌ Mega Login failed: {e}")
+        return False
 
+# Pyrogram Client Setup
 app = Client(
     "uploader_360p",
     api_id=int(os.environ.get("UPLOADER_API_ID")),
-    api_hash=os.environ.get("UPLOADER_API_HASH"),
-    bot_token=os.environ.get("UPLOADER_BOT_TOKEN"),
+    api_hash=os.environ.get("UPLOADER_API_HASH")),
+    bot_token=os.environ.get("UPLOADER_BOT_TOKEN")),
+    ipv6=False,
     workers=16
 )
 
-# --- COMMANDS ---
-
 @app.on_message(filters.command("ping"))
-async def ping_handler(client, message):
+async def ping(client, message):
     await message.reply_text(f"✅ {QUALITY_TAG} Uploader is ONLINE!")
 
 @app.on_message(filters.command(["upload", "fastupload"]))
-async def fast_upload_360(client, message):
+async def upload_handler(client, message):
     cmd_text = message.text.lower()
-    
     if "-all" not in cmd_text and "-360" not in cmd_text:
         return
 
-    # 40-second stagger delay for the 360p bot
-    await asyncio.sleep(40)
+    # [cite_start]Staggered delay for 360p bot [cite: 107, 110]
+    await asyncio.sleep(SLEEP_TIME)
 
     parts = message.text.split()
-    folder_name = None
-    for part in parts[1:]:
-        if not part.startswith('-'):
-            folder_name = part.strip('"\'')
-            break
-            
+    folder_name = next((p.strip('"\'') for p in parts[1:] if not p.startswith('-')), None)
     if not folder_name: return
 
     mega_folder = f"{MEGA_ROOT}/{folder_name}"
-    cmd = f'mega-ls "{mega_folder}"'
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     
-    if result.returncode != 0: return
-    
-    all_files = result.stdout.strip().split('\n')
-    target_files = [f for f in all_files if "360p" in f.lower() or "_360_" in f]
+    # [cite_start]List files from Mega [cite: 5, 121]
+    res = subprocess.run(f'mega-ls "{mega_folder}"', shell=True, capture_output=True, text=True)
+    if res.returncode != 0:
+        return await message.reply(f"❌ Mega folder `{folder_name}` not found.")
+
+    all_files = res.stdout.strip().split('\n')
+    # [cite_start]Filter for 360p quality [cite: 18, 112]
+    target_files = [f for f in all_files if QUALITY_TAG in f.lower() or "_360_" in f]
 
     if not target_files:
-        return await message.reply(f"❌ No 360p files found in `{folder_name}`")
+        return await message.reply(f"❌ No {QUALITY_TAG} files found.")
 
-    status_msg = await message.reply(f"🚀 **360p Uploader Started**\nFiles: `{len(target_files)}`")
+    status = await message.reply(f"🚀 **{QUALITY_TAG} Started** | Files: `{len(target_files)}`")
 
     for filename in target_files:
         local_path = f"./{filename}"
+        # [cite_start]Download file [cite: 24, 110]
         subprocess.run(f'mega-get "{mega_folder}/{filename}" "{local_path}"', shell=True)
         
         if os.path.exists(local_path):
@@ -93,18 +91,17 @@ async def fast_upload_360(client, message):
                     force_document=True
                 )
             except Exception as e:
-                print(f"Upload error: {e}")
+                print(f"Upload error: {filename} - {e}")
             finally:
-                if os.path.exists(local_path):
-                    os.remove(local_path)
+                if os.path.exists(local_path): os.remove(local_path)
     
-    await status_msg.edit_text(f"✅ **360p UPLOAD COMPLETE**\nFolder: `{folder_name}`")
+    await status.edit_text(f"✅ **{QUALITY_TAG} UPLOAD COMPLETE**")
 
 async def main():
     threading.Thread(target=run_flask, daemon=True).start()
     mega_login()
     await app.start()
-    print("✅ 360p Uploader Bot Online on Render")
+    print(f"✅ {QUALITY_TAG} Uploader Started")
     await idle()
 
 if __name__ == "__main__":
