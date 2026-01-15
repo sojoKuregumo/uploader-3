@@ -294,6 +294,11 @@ async def main():
     me = await app.get_me()
     print(f"✅ BOT IS RUNNING: @{me.username} (ID: {me.id})", flush=True)
     print("🎯 Listening for commands...", flush=True)
+
+    # Add this above the idle() line in main.py temporarily
+@app.on_message(filters.group)
+async def debug_group_messages(client, message):
+    print(f"👀 SAW MESSAGE in Chat {message.chat.id} (Topic: {message.message_thread_id}): {message.text}", flush=True)
     
     await idle()
     await app.stop()
