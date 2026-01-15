@@ -7,6 +7,7 @@ from flask import Flask
 from pyrogram import Client, filters, idle
 
 # --- RENDER PORT CONFIGURATION ---
+# Opens a web port so Render keeps the bot active
 web_app = Flask(__name__)
 
 @web_app.route('/')
@@ -17,7 +18,7 @@ def run_flask():
     port = int(os.environ.get("PORT", 8080))
     web_app.run(host='0.0.0.0', port=port)
 
-# --- UPLOADER LOGIC ---
+# --- CONFIGURATION ---
 QUALITY_TAG = "1080p"
 MEGA_ROOT = "/Root/AnimeDownloads"
 TARGET_CHAT_ID = -1003392399992
@@ -34,6 +35,7 @@ def mega_login():
         return True
     return False
 
+# Pyrogram Client Setup
 app = Client(
     "uploader_1080p",
     api_id=int(os.environ.get("UPLOADER_API_ID")),
@@ -42,10 +44,19 @@ app = Client(
     workers=16
 )
 
+# --- COMMANDS ---
+
+@app.on_message(filters.command("ping"))
+async def ping_handler(client, message):
+    """Checks if the bot is alive"""
+    await message.reply_text(f"✅ {QUALITY_TAG} Uploader is ONLINE!")
+
 @app.on_message(filters.command(["upload", "fastupload"]))
 async def fast_upload_1080(client, message):
+    """Main upload logic for 1080p files"""
     cmd_text = message.text.lower()
     
+    # Only react if '-all' or '-1080' is in the command
     if "-all" not in cmd_text and "-1080" not in cmd_text:
         return
 
@@ -56,15 +67,19 @@ async def fast_upload_1080(client, message):
             folder_name = part.strip('"\'')
             break
             
-    if not folder_name: return
+    if not folder_name:
+        return await message.reply("❌ Please provide a folder name.")
 
+    # List files from Mega
     mega_folder = f"{MEGA_ROOT}/{folder_name}"
     cmd = f'mega-ls "{mega_folder}"'
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     
-    if result.returncode != 0: return
+    if result.returncode != 0:
+        return await message.reply(f"❌ Folder `{folder_name}` not found in Mega.")
     
     all_files = result.stdout.strip().split('\n')
+    # FILTER: Specifically look for 1080p files [cite: 18, 25]
     target_files = [f for f in all_files if "1080p" in f.lower() or "_1080_" in f]
 
     if not target_files:
@@ -74,10 +89,12 @@ async def fast_upload_1080(client, message):
 
     for filename in target_files:
         local_path = f"./{filename}"
+        # Download from Mega [cite: 6, 24]
         subprocess.run(f'mega-get "{mega_folder}/{filename}" "{local_path}"', shell=True)
         
         if os.path.exists(local_path):
             try:
+                # Send to Telegram [cite: 26, 27]
                 await client.send_document(
                     chat_id=TARGET_CHAT_ID,
                     document=local_path,
@@ -88,9 +105,14 @@ async def fast_upload_1080(client, message):
             finally:
                 if os.path.exists(local_path):
                     os.remove(local_path)
+    
+    await status_msg.edit_text(f"✅ **1080p UPLOAD COMPLETE**\nFolder: `{folder_name}`")
 
 async def main():
+    # Start the Health Check server in background [cite: 4]
     threading.Thread(target=run_flask, daemon=True).start()
+    
+    # Login and start bot [cite: 2, 42]
     mega_login()
     await app.start()
     print("✅ 1080p Uploader Bot Online on Render")
